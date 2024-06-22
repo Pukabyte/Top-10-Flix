@@ -7,19 +7,21 @@ from rapidfuzz import fuzz  # Using rapidfuzz for better performance
 import re
 from dotenv import load_dotenv
 
-# Debug tracing flag
-trace = False  # Enable detailed logging for troubleshooting
-
 # Load environment variables from .env file
 load_dotenv()
 
-# Access the environment variables
-client_id = os.getenv('CLIENT_ID')
-client_secret = os.getenv('CLIENT_SECRET')
-trakt_username = os.getenv('TRAKT_USERNAME')
+# Debug tracing flag
+trace = False  # Enable detailed logging for troubleshooting
 
 # Headers for HTTP requests
 headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_17) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.5112.79 Safari/537.36'}
+
+# Trakt API credentials
+client_id = os.getenv('CLIENT_ID')
+client_secret = os.getenv('CLIENT_SECRET')
+
+# Replace 'your_trakt_username' with your actual Trakt username
+trakt_username = os.getenv('TRAKT_USERNAME')
 
 # URLs for Trakt API
 auth_base_url = 'https://api.trakt.tv/oauth/device/code'
@@ -34,7 +36,7 @@ trakt_search_url = 'https://api.trakt.tv/search/movie,show?query='
 token_file = 'trakt_token.txt'
 
 # Service names for multiple streaming platforms
-services = ['netflix', 'disney', 'hbo', 'apple-tv', 'amazon-prime']
+services = ['netflix', 'disney', 'hbo', 'apple-tv', 'amazon-prime']  # Removed Hulu and Paramount+
 
 # Function to get the FlixPatrol URL for a given service
 def get_flixpatrol_url(service):
@@ -64,7 +66,6 @@ def extract_titles_from_section(section_div):
         td_element = row.find('td', class_='table-td w-1/2')
         if td_element and td_element.find('a'):
             title = td_element.find('a').text.strip()
-            # Do not append the year to the title
             titles_list.append(title)
     
     return titles_list
@@ -89,7 +90,10 @@ def get_flixpatrol_top10(service):
         tvshows_list = extract_titles_from_section(tvshows_section)
 
     return movies_list, tvshows_list
-    
+
+# Example usage
+services = ['netflix', 'disney', 'hbo', 'apple-tv', 'amazon-prime']
+
 for service in services:
     print(f"Top 10 for {service.capitalize()}:")
     movies, tvshows = get_flixpatrol_top10(service)
@@ -120,6 +124,7 @@ def find_good_access_token():
     auth_code, device_code = get_trakt_code()
     if auth_code:
         print('Please activate Trakt device using:', auth_code)
+        print('Visit this URL to activate: https://trakt.tv/activate')
         access_token = get_trakt_oauth(device_code)
         if access_token:
             with open(token_file, 'w') as f:
@@ -135,7 +140,11 @@ def get_trakt_code():
     response = requests.post(auth_base_url, json=trakt_payload, headers=trakt_headers)
     if response.status_code == 200:
         data = response.json()
-        return data['user_code'], data['device_code']
+        user_code = data['user_code']
+        device_code = data['device_code']
+        print(f'Please activate Trakt device using the following code: {user_code}')
+        print(f'Visit this URL to activate: https://trakt.tv/activate')
+        return user_code, device_code
     else:
         if trace:
             print(f"Failed to get device code: {response.status_code}, {response.content.decode()}")
@@ -262,8 +271,7 @@ for service in services:
     trakt_id_list = []
     for title in combined_list:
         stripped_title = title.strip()
-        if trace:
-            print(f'Searching for title: {stripped_title}')  # Log the title being searched
+        print(f'Searching for title: {stripped_title}')  # Log the title being searched
         search_url = trakt_search_url + stripped_title + '&fields=title&extended=full'
         response = rate_limited_request(requests.get, search_url, headers=trakt_headers)
         if response.status_code == 200:
