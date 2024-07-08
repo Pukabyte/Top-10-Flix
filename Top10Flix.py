@@ -1,14 +1,43 @@
+from bs4 import BeautifulSoup
+from rapidfuzz import fuzz  # Using rapidfuzz for better performance
+from dotenv import load_dotenv
+from loguru import logger
 import requests
 import os
 import time
-from bs4 import BeautifulSoup
-import sys
-from rapidfuzz import fuzz  # Using rapidfuzz for better performance
 import re
-from dotenv import load_dotenv
+import sys
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Define custom log levels
+logger.level("ADDED", no=25, color="<green>")
+logger.level("DELETED", no=35, color="<red>")
+
+# Loguru configuration
+logger.remove()
+logger.add(
+    sys.stdout, 
+    colorize=True, 
+    format="<red>{time:MMMM DD YYYY}</red> <white>{time:HH:mm:ss.SS}</white> | {extra[emoji]} <level>{level}</level> | <light-yellow>{extra[function]}</light-yellow> <level>{message}</level>"
+)
+
+# Movie-themed emojis for different log levels
+LOG_EMOJIS = {
+    'DEBUG': '🎬',
+    'INFO': '🍿',
+    'WARNING': '⚠️',
+    'ERROR': '🚨',
+    'CRITICAL': '💀',
+    'SUCCESS': '✅',
+    'ADDED': '➕',
+    'DELETED': '❌'
+}
+
+def log_with_emoji(level, message, function):
+    emoji = LOG_EMOJIS.get(level, '')
+    logger.bind(emoji=emoji, function=function).log(level, message)
 
 # Debug tracing flag
 trace = False  # Enable detailed logging for troubleshooting
@@ -38,7 +67,6 @@ token_file = 'trakt_token.txt'
 # Service names for multiple streaming platforms
 services = ['netflix', 'disney', 'hbo', 'apple-tv', 'amazon-prime']  # Removed Hulu and Paramount+
 
-# Function to get the FlixPatrol URL for a given service
 def get_flixpatrol_url(service):
     base_url = "https://flixpatrol.com/top10/"
     urls = {
@@ -53,24 +81,16 @@ def get_flixpatrol_url(service):
     else:
         raise ValueError("Unsupported service")
 
-# Function to extract titles from a specific section (Movies or TV Shows)
 def extract_titles_from_section(section_div):
-    """
-    Extracts and cleans the titles from a given section div (Movies or TV Shows).
-    """
     titles_list = []
-
     rows = section_div.find_all('tr', class_='table-group')
     for row in rows:
-        # Extract title from <a> tag within the appropriate <td>
         td_element = row.find('td', class_='table-td w-1/2')
         if td_element and td_element.find('a'):
             title = td_element.find('a').text.strip()
             titles_list.append(title)
-    
     return titles_list
 
-# Function to fetch and parse the top 10 list from FlixPatrol
 def get_flixpatrol_top10(service):
     url = get_flixpatrol_url(service)
     res = requests.get(url, headers=headers)
@@ -79,35 +99,16 @@ def get_flixpatrol_top10(service):
     movies_list = []
     tvshows_list = []
 
-    # Find the Movies section
     movies_section = soup.find('div', id=f'{service}-1')
     if movies_section:
         movies_list = extract_titles_from_section(movies_section)
 
-    # Find the TV Shows section
     tvshows_section = soup.find('div', id=f'{service}-2')
     if tvshows_section:
         tvshows_list = extract_titles_from_section(tvshows_section)
 
     return movies_list, tvshows_list
 
-# Example usage
-services = ['netflix', 'disney', 'hbo', 'apple-tv', 'amazon-prime']
-
-for service in services:
-    print(f"Top 10 for {service.capitalize()}:")
-    movies, tvshows = get_flixpatrol_top10(service)
-    
-    print("\nMovies:")
-    for title in movies:
-        print(title)
-    
-    print("\nTV Shows:")
-    for title in tvshows:
-        print(title)
-    print("\n" + "-"*40 + "\n")
-
-# Function to get a valid Trakt access token
 def find_good_access_token():
     try:
         with open(token_file, 'r') as f:
@@ -123,34 +124,28 @@ def find_good_access_token():
 
     auth_code, device_code = get_trakt_code()
     if auth_code:
-        print('Please activate Trakt device using:', auth_code)
-        print('Visit this URL to activate: https://trakt.tv/activate')
+        log_with_emoji('INFO', 'Please activate Trakt device using:', 'find_good_access_token')
+        log_with_emoji('INFO', auth_code, 'find_good_access_token')
         access_token = get_trakt_oauth(device_code)
         if access_token:
             with open(token_file, 'w') as f:
                 f.write(access_token)
             return access_token
-    print('Unable to get Trakt authorization')
+    log_with_emoji('ERROR', 'Unable to get Trakt authorization', 'find_good_access_token')
     return 'No token'
 
-# Function to get the Trakt authorization code
 def get_trakt_code():
     trakt_headers = {'Content-Type': 'application/json', 'trakt-api-key': client_id}
     trakt_payload = {'client_id': client_id}
     response = requests.post(auth_base_url, json=trakt_payload, headers=trakt_headers)
     if response.status_code == 200:
         data = response.json()
-        user_code = data['user_code']
-        device_code = data['device_code']
-        print(f'Please activate Trakt device using the following code: {user_code}')
-        print(f'Visit this URL to activate: https://trakt.tv/activate')
-        return user_code, device_code
+        return data['user_code'], data['device_code']
     else:
         if trace:
-            print(f"Failed to get device code: {response.status_code}, {response.content.decode()}")
+            log_with_emoji('DEBUG', f"Failed to get device code: {response.status_code}, {response.content.decode()}", 'get_trakt_code')
         return None, None
 
-# Function to get the Trakt OAuth token
 def get_trakt_oauth(device_code):
     trakt_headers = {'Content-Type': 'application/json', 'trakt-api-key': client_id, 'trakt-api-version': '2'}
     trakt_payload = {'code': device_code, 'client_id': client_id, 'client_secret': client_secret}
@@ -167,17 +162,15 @@ def get_trakt_oauth(device_code):
             tries += 1
         else:
             if trace:
-                print(f"Failed to obtain OAuth token: {response.status_code}, {response.content.decode()}")
+                log_with_emoji('DEBUG', f"Failed to obtain OAuth token: {response.status_code}, {response.content.decode()}", 'get_trakt_oauth')
             break
     return None
 
-# Function to validate the Trakt token
 def get_trakt_me(test_token):
     trakt_headers = {'content-type': 'application/json', 'authorization': test_token, 'trakt-api-version': '2', 'trakt-api-key': client_id}
     response = requests.get(f'https://api.trakt.tv/users/{trakt_username}', headers=trakt_headers)
     return response.status_code == 200
 
-# Function to create a payload for Trakt list update
 def make_payload(trakt_id_list):
     payload = {'movies': [], 'shows': []}
     for item in trakt_id_list:
@@ -187,35 +180,29 @@ def make_payload(trakt_id_list):
             payload['shows'].append({'ids': {'trakt': item['id']}})
     return payload
 
-# Function to handle rate-limited requests with retries
 def rate_limited_request(method, url, **kwargs):
     max_retries = 5
     for i in range(max_retries):
         response = method(url, **kwargs)
         if response.status_code == 429:
             retry_after = int(response.headers.get('Retry-After', 1))
-            print(f'Rate limit exceeded. Retrying after {retry_after} seconds...')
+            log_with_emoji('WARNING', f'Rate limit exceeded. Retrying after {retry_after} seconds...', 'rate_limited_request')
             time.sleep(retry_after)
         else:
             return response
-    print('Exceeded maximum retries due to rate limiting.')
+    log_with_emoji('ERROR', 'Exceeded maximum retries due to rate limiting.', 'rate_limited_request')
     sys.exit()
 
-# Function to process the Trakt list (create, update, clear)
 def process_list(service, combined_list):
     list_name = f'{service.capitalize()}-Top10'
     trakt_headers = {'content-type': 'application/json', 'authorization': token_result, 'trakt-api-version': '2', 'trakt-api-key': client_id}
     list_url = trakt_list_url_template.format(list_name=list_name)
 
-    # Initialize data as an empty list
-    data = []
-
-    # Attempt to retrieve the existing list
+    existing_items = []
     response = requests.get(list_url, headers=trakt_headers)
     if response.status_code == 200:
-        data = response.json()
+        existing_items = response.json()
     elif response.status_code == 404:
-        # List doesn't exist, create it
         Dname = list_name
         Desc = f'Top 10 Movies and TV Shows on {service.capitalize()} in the World, updated daily'
         trakt_payload = {'name': Dname,
@@ -227,87 +214,91 @@ def process_list(service, combined_list):
                          'sort_how': 'asc'}
         list_url = trakt_base_url + 'lists/'
         response = rate_limited_request(requests.post, list_url, json=trakt_payload, headers=trakt_headers)
-        if trace:
-            print(f'List created. Trakt response code: {response.status_code}')
-            print(f'Trakt response content for list creation: {response.content.decode()}')
+        log_with_emoji('INFO', f'List created.', 'process_list')
         if response.status_code != 201:
-            print('Unable to create new Trakt list, bailing out')
+            log_with_emoji('ERROR', 'Unable to create new Trakt list, bailing out', 'process_list')
             sys.exit()
     else:
-        print(f"Unexpected response while getting the list: {response.status_code}, {response.content.decode()}")
+        log_with_emoji('ERROR', f"Unexpected response while getting the list: {response.status_code}, {response.content.decode()}", 'process_list')
         return False
 
-    # If we have existing data, prepare to remove current items
-    if data:
-        item_del_list = [{'type': item['type'], 'id': item['movie']['ids']['trakt']} if 'movie' in item else {'type': 'show', 'id': item['show']['ids']['trakt']} for item in data]
-        trakt_payload = make_payload(item_del_list)
-        remove_url = trakt_list_remove_url_template.format(list_name=list_name)
-        response = rate_limited_request(requests.post, remove_url, json=trakt_payload, headers=trakt_headers)
-        if trace:
-            print(f'Items removed. Trakt response code for item removal: {response.status_code}')
-            print(f'Trakt response content for item removal: {response.content.decode()}')
-        if response.status_code != 200:
-            print(f"Error removing items from the list: {response.status_code}, {response.content.decode()}")
+    existing_titles = {item['movie']['title'] if 'movie' in item else item['show']['title'] for item in existing_items}
+    combined_titles = set(combined_list)
 
-    return True
+    to_add = combined_titles - existing_titles
+    to_delete = existing_titles - combined_titles
 
-# Main script execution
-token_result = find_good_access_token()
-if token_result == "No token":
-    print('No valid Trakt token found or created, bailing here')
-    sys.exit()
-
-for service in services:
-    print(f'Processing top 10 list for {service.capitalize()}')
-    movies_list, tvshows_list = get_flixpatrol_top10(service)
-
-    combined_list = movies_list + tvshows_list  # Combine movies and TV shows into one list
-
-    if not process_list(service, combined_list):
-        print(f'Unable to create/update the Trakt list for {service.capitalize()} - bailing here')
-        sys.exit()
-
-    trakt_headers = {'content-type': 'application/json', 'authorization': token_result, 'trakt-api-version': '2', 'trakt-api-key': client_id}
-    trakt_id_list = []
-    for title in combined_list:
+    # Add new items that are not in the existing list
+    trakt_id_list_to_add = []
+    for title in to_add:
         stripped_title = title.strip()
-        print(f'Searching for title: {stripped_title}')  # Log the title being searched
+        if trace:
+            log_with_emoji('DEBUG', f'Searching for title: {stripped_title}', 'process_list')
         search_url = trakt_search_url + stripped_title + '&fields=title&extended=full'
         response = rate_limited_request(requests.get, search_url, headers=trakt_headers)
         if response.status_code == 200:
             data = response.json()
             if trace:
-                print(f'Search results for {stripped_title}: {data}')  # Log the search results
+                log_with_emoji('DEBUG', f'Search results for {stripped_title}', 'process_list')
             for item in data:
                 if 'movie' in item:
                     movie_deets = item['movie']
                     similarity_score = fuzz.ratio(stripped_title, movie_deets['title'])
                     if trace:
-                        print(f'Comparing "{stripped_title}" with "{movie_deets["title"]}", similarity score: {similarity_score}')  # Log the comparison
-                    if similarity_score > 70:  # Lowered threshold to capture more matches
-                        trakt_id_list.append({'type': 'movie', 'id': movie_deets['ids']['trakt']})
+                        log_with_emoji('DEBUG', f'Comparing "{stripped_title}" with "{movie_deets["title"]}", similarity score: {similarity_score}', 'process_list')
+                    if similarity_score > 70:
+                        trakt_id_list_to_add.append({'type': 'movie', 'id': movie_deets['ids']['trakt'], 'name': movie_deets['title']})
                         if trace:
-                            print(f'Match found for movie: {movie_deets["title"]}')  # Log the matched movie
+                            log_with_emoji('DEBUG', f'Match found for movie: {movie_deets["title"]}', 'process_list')
                         break
                 elif 'show' in item:
                     show_deets = item['show']
                     similarity_score = fuzz.ratio(stripped_title, show_deets['title'])
                     if trace:
-                        print(f'Comparing "{stripped_title}" with "{show_deets["title"]}", similarity score: {similarity_score}')  # Log the comparison
-                    if similarity_score > 70:  # Lowered threshold to capture more matches
-                        trakt_id_list.append({'type': 'show', 'id': show_deets['ids']['trakt']})
+                        log_with_emoji('DEBUG', f'Comparing "{stripped_title}" with "{show_deets["title"]}", similarity score: {similarity_score}', 'process_list')
+                    if similarity_score > 70:
+                        trakt_id_list_to_add.append({'type': 'show', 'id': show_deets['ids']['trakt'], 'name': show_deets['title']})
                         if trace:
-                            print(f'Match found for show: {show_deets["title"]}')  # Log the matched show
+                            log_with_emoji('DEBUG', f'Match found for show: {show_deets["title"]}', 'process_list')
                         break
 
-    if not trakt_id_list:
-        print(f'No matches found for titles from {service.capitalize()}')  # Log if no matches found
+    if trakt_id_list_to_add:
+        trakt_payload = make_payload(trakt_id_list_to_add)
+        add_url = trakt_list_add_url_template.format(list_name=list_name)
+        response = rate_limited_request(requests.post, add_url, json=trakt_payload, headers=trakt_headers)
+        if response.status_code == 201:
+            for item in trakt_id_list_to_add:
+                log_with_emoji('ADDED', f"Added {item['type']}: {item['name']}", 'process_list')
+            log_with_emoji('ADDED', f"Total items added: {len(trakt_id_list_to_add)}", 'process_list')
+        else:
+            log_with_emoji('ERROR', f'Error adding items to {service.capitalize()} list on Trakt: {response.status_code}, {response.content.decode()}', 'process_list')
 
-    trakt_payload = make_payload(trakt_id_list)
-    add_url = trakt_list_add_url_template.format(list_name=f'{service.capitalize()}-Top10')
-    response = rate_limited_request(requests.post, add_url, json=trakt_payload, headers=trakt_headers)
-    if trace:
-        print(f'Items added. Trakt response code for adding items: {response.status_code}')
-        print(f'Trakt response content for adding items: {response.content.decode()}')
-    if response.status_code != 201:
-        print(f'Error adding items to {service.capitalize()} list on Trakt: {response.status_code}, {response.content.decode()}')
+    # Remove items that are no longer in the top 10
+    item_del_list = [{'type': item['type'], 'id': item['movie']['ids']['trakt'], 'name': item['movie']['title']} if 'movie' in item else {'type': 'show', 'id': item['show']['ids']['trakt'], 'name': item['show']['title']} for item in existing_items if (item['movie']['title'] if 'movie' in item else item['show']['title']) in to_delete]
+    if item_del_list:
+        trakt_payload = make_payload(item_del_list)
+        remove_url = trakt_list_remove_url_template.format(list_name=list_name)
+        response = rate_limited_request(requests.post, remove_url, json=trakt_payload, headers=trakt_headers)
+        if response.status_code == 200:
+            for item in item_del_list:
+                log_with_emoji('DELETED', f"Deleted {item['type']}: {item['name']}", 'process_list')
+            log_with_emoji('DELETED', f"Total items deleted: {len(item_del_list)}", 'process_list')
+        else:
+            log_with_emoji('ERROR', f"Error removing items from the list: {response.status_code}, {response.content.decode()}", 'process_list')
+
+    return True
+
+token_result = find_good_access_token()
+if token_result == "No token":
+    log_with_emoji('ERROR', 'No valid Trakt token found or created, bailing here', '__main__')
+    sys.exit()
+
+for service in services:
+    log_with_emoji('INFO', f'Processing top 10 list for {service.capitalize()}', '__main__')
+    movies_list, tvshows_list = get_flixpatrol_top10(service)
+
+    combined_list = movies_list + tvshows_list
+
+    if not process_list(service, combined_list):
+        log_with_emoji('ERROR', f'Unable to create/update the Trakt list for {service.capitalize()} - bailing here', '__main__')
+        sys.exit()
