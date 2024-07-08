@@ -246,7 +246,7 @@ def process_list(service, combined_list):
         if trace:
             print(f'Items removed. Trakt response code for item removal: {response.status_code}')
             print(f'Trakt response content for item removal: {response.content.decode()}')
-        if response.status_code != 204:
+        if response.status_code != 200:
             print(f"Error removing items from the list: {response.status_code}, {response.content.decode()}")
 
     return True
